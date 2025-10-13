@@ -1,0 +1,6 @@
+BOT_TOKEN=your_bot_token
+DATABASE_URL=your_database_url
+WEB_APP_URL=https://your-app.onrender.com
+POLAR_CLIENT_ID=dc1d0e67-ed55-4d9d-80ce-643ee41122c2
+POLAR_CLIENT_SECRET=c56390b7-87b8-48aa-8d6f-e1159c837177
+POLAR_REDIRECT_URI=https://training-diary-bot.onrender.com/polar/callback

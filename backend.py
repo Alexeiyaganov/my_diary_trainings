@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -10,9 +10,13 @@ import os
 from pydantic import BaseModel
 from typing import Optional, List
 import json
+import hashlib
+import hmac
+import time
 
 # Конфигурация
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./test.db")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 Base = declarative_base()
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -26,6 +30,8 @@ class User(Base):
     username = Column(String(100))
     full_name = Column(String(200))
     role = Column(String(20), default='athlete')
+    polar_access_token = Column(Text)
+    polar_user_id = Column(String(100))
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -41,6 +47,7 @@ class TrainingSession(Base):
     calories = Column(Integer)
     notes = Column(Text)
     source = Column(String(20), default='manual')
+    polar_training_id = Column(String(255))
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -95,6 +102,12 @@ class TrainingPlanCreate(BaseModel):
     assignments: List[dict]
 
 
+class PolarAuthRequest(BaseModel):
+    user_id: int
+    access_token: str
+    user_id_polar: str
+
+
 # FastAPI приложение
 app = FastAPI()
 
@@ -123,22 +136,66 @@ def startup():
     Base.metadata.create_all(bind=engine)
 
 
+# Валидация Telegram Web App данных
+def validate_telegram_data(init_data: str) -> bool:
+    if not TELEGRAM_BOT_TOKEN:
+        return True  # В разработке пропускаем проверку
+
+    try:
+        parsed_data = {}
+        for item in init_data.split('&'):
+            key, value = item.split('=')
+            parsed_data[key] = value
+
+        hash_str = parsed_data.pop('hash')
+        data_check_string = '\n'.join([f"{k}={v}" for k, v in sorted(parsed_data.items())])
+
+        secret_key = hmac.new(b"WebAppData", TELEGRAM_BOT_TOKEN.encode(), hashlib.sha256).digest()
+        calculated_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+
+        return calculated_hash == hash_str
+    except:
+        return False
+
+
 # API endpoints
 @app.get("/")
 async def read_index():
     return FileResponse('index.html')
 
 
-@app.post("/api/users/")
-async def create_user(user: UserCreate, db: Session = Depends(get_db)):
-    db_user = db.query(User).filter(User.telegram_id == user.telegram_id).first()
-    if db_user:
-        return db_user
+@app.post("/api/auth/telegram")
+async def auth_telegram(request: Request, db: Session = Depends(get_db)):
+    form_data = await request.form()
+    init_data = form_data.get('initData')
 
-    db_user = User(**user.dict())
-    db.add(db_user)
-    db.commit()
-    db.refresh(db_user)
+    if not validate_telegram_data(init_data):
+        raise HTTPException(status_code=401, detail="Invalid Telegram data")
+
+    # Парсим данные пользователя
+    user_data = {}
+    for item in init_data.split('&'):
+        if 'user=' in item:
+            user_json = item.split('user=')[1]
+            user_data = json.loads(user_json)
+            break
+
+    if not user_data:
+        raise HTTPException(status_code=400, detail="User data not found")
+
+    # Создаем/обновляем пользователя
+    db_user = db.query(User).filter(User.telegram_id == str(user_data['id'])).first()
+    if not db_user:
+        db_user = User(
+            telegram_id=str(user_data['id']),
+            username=user_data.get('username'),
+            full_name=f"{user_data.get('first_name', '')} {user_data.get('last_name', '')}".strip(),
+            role='athlete'
+        )
+        db.add(db_user)
+        db.commit()
+        db.refresh(db_user)
+
     return db_user
 
 
@@ -215,6 +272,35 @@ async def get_dashboard_stats(user_id: int, db: Session = Depends(get_db)):
     }
 
 
+@app.post("/api/polar/auth")
+async def polar_auth(auth: PolarAuthRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.id == auth.user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user.polar_access_token = auth.access_token
+    user.polar_user_id = auth.user_id_polar
+    db.commit()
+
+    return {"status": "success", "message": "Polar account connected"}
+
+
+@app.get("/api/polar/sync/{user_id}")
+async def sync_polar_data(user_id: int, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user or not user.polar_access_token:
+        raise HTTPException(status_code=400, detail="Polar not connected")
+
+    # Здесь будет реальная синхронизация с Polar API
+    # Пока возвращаем заглушку
+    return {
+        "status": "success",
+        "message": "Polar sync completed",
+        "synced_trainings": 0,
+        "new_trainings": []
+    }
+
+
 @app.post("/api/training_plans/")
 async def create_training_plan(plan: TrainingPlanCreate, db: Session = Depends(get_db)):
     db_plan = TrainingPlan(
@@ -247,6 +333,22 @@ async def create_training_plan(plan: TrainingPlanCreate, db: Session = Depends(g
 async def get_user_plans(user_id: int, db: Session = Depends(get_db)):
     plans = db.query(TrainingPlan).filter(TrainingPlan.user_id == user_id).all()
     return plans
+
+
+# Список доступных видов спорта
+@app.get("/api/sports")
+async def get_sports():
+    sports = [
+        {"id": "running", "name": "🏃 Бег", "default": True},
+        {"id": "cycling", "name": "🚴 Велосипед", "default": False},
+        {"id": "swimming", "name": "🏊 Плавание", "default": False},
+        {"id": "strength", "name": "💪 Силовая", "default": False},
+        {"id": "yoga", "name": "🧘 Йога", "default": False},
+        {"id": "walking", "name": "🚶 Ходьба", "default": False},
+        {"id": "skiing", "name": "⛷️ Лыжи", "default": False},
+        {"id": "rowing", "name": "🚣 Гребля", "default": False}
+    ]
+    return sports
 
 
 if __name__ == "__main__":

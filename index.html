@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Тренировочный дневник</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
     <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css">
@@ -14,7 +15,7 @@
         body { font-family: 'Inter', sans-serif; background: #f5f7fa; }
         .app { max-width: 1200px; margin: 0 auto; padding: 20px; }
         .header { background: white; padding: 20px; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        .nav { display: flex; gap: 20px; margin-bottom: 20px; }
+        .nav { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
         .nav-btn { padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; background: #409EFF; color: white; }
         .nav-btn.active { background: #337ecc; }
         .card { background: white; padding: 20px; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
@@ -27,183 +28,262 @@
         .sport-tag { display: inline-block; padding: 2px 8px; border-radius: 3px; color: white; font-size: 0.8em; }
         .form-group { margin-bottom: 15px; }
         .form-label { display: block; margin-bottom: 5px; font-weight: bold; }
-        .form-input { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
-        .btn { padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; }
+        .form-input, .form-select, .form-textarea { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
+        .btn { padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; text-decoration: none; display: inline-block; }
         .btn-primary { background: #409EFF; color: white; }
         .btn-success { background: #67C23A; color: white; }
-        .table { width: 100%; border-collapse: collapse; background: white; border-radius: 5px; overflow: hidden; }
-        .table th, .table td { padding: 12px; text-align: left; border-bottom: 1px solid #eee; }
-        .table th { background: #f8f9fa; font-weight: bold; }
+        .btn-warning { background: #E6A23C; color: white; }
+        .polar-connected { background: #67C23A; color: white; padding: 5px 10px; border-radius: 3px; }
+        .polar-disconnected { background: #F56C6C; color: white; padding: 5px 10px; border-radius: 3px; }
+        .login-screen { text-align: center; padding: 50px 20px; }
+        .login-btn { background: #409EFF; color: white; padding: 15px 30px; border: none; border-radius: 10px; font-size: 1.2em; cursor: pointer; }
+        .user-info { display: flex; align-items: center; gap: 10px; margin-bottom: 15px; }
+        .user-avatar { width: 50px; height: 50px; border-radius: 50%; background: #409EFF; color: white; display: flex; align-items: center; justify-content: center; font-weight: bold; }
     </style>
 </head>
 <body>
     <div id="app">
         <div class="app">
-            <!-- Шапка -->
-            <div class="header">
-                <h1>🏃 Тренировочный дневник</h1>
-                <div class="nav">
-                    <button class="nav-btn" :class="{active: currentView === 'dashboard'}" @click="currentView = 'dashboard'">📊 Дашборд</button>
-                    <button class="nav-btn" :class="{active: currentView === 'trainings'}" @click="currentView = 'trainings'">📝 Тренировки</button>
-                    <button class="nav-btn" :class="{active: currentView === 'plans'}" @click="currentView = 'plans'">📅 Планы</button>
-                    <button class="nav-btn" :class="{active: currentView === 'coach'}" @click="currentView = 'coach'" v-if="user?.role === 'coach'">👨‍💻 Тренер</button>
-                </div>
-            </div>
-
-            <!-- Дашборд -->
-            <div v-if="currentView === 'dashboard'" class="dashboard">
-                <div class="stats-grid">
-                    <div class="stat-card">
-                        <div class="stat-value">{{ stats.total_trainings || 0 }}</div>
-                        <div class="stat-label">Всего тренировок</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value">{{ stats.total_duration_hours || 0 }}</div>
-                        <div class="stat-label">Часов тренировок</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value">{{ stats.total_distance_km || 0 }}</div>
-                        <div class="stat-label">Километров</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value">{{ currentWeekTrainings || 0 }}</div>
-                        <div class="stat-label">На этой неделе</div>
-                    </div>
-                </div>
-
+            <!-- Экран авторизации -->
+            <div v-if="!user" class="login-screen">
                 <div class="card">
-                    <h3>Тренировки по неделям</h3>
-                    <div class="chart-container">
-                        <canvas ref="weeklyChart"></canvas>
-                    </div>
-                </div>
-
-                <div class="card">
-                    <h3>Распределение по видам спорта</h3>
-                    <div class="chart-container">
-                        <canvas ref="sportChart"></canvas>
+                    <h1>🏃 Тренировочный дневник</h1>
+                    <p style="margin: 20px 0; color: #666;">Войдите через Telegram чтобы начать использовать дневник</p>
+                    <button class="login-btn" @click="loginWithTelegram">📱 Войти через Telegram</button>
+                    <div style="margin-top: 30px; padding: 20px; background: #f8f9fa; border-radius: 10px;">
+                        <h3>Возможности:</h3>
+                        <ul style="text-align: left; margin-top: 15px;">
+                            <li>📊 Дашборд с аналитикой тренировок</li>
+                            <li>📝 Удобное добавление тренировок</li>
+                            <li>🔗 Синхронизация с Polar Flow</li>
+                            <li>📅 Планы тренировок от тренера</li>
+                            <li>📈 Визуализация прогресса</li>
+                        </ul>
                     </div>
                 </div>
             </div>
 
-            <!-- Тренировки -->
-            <div v-if="currentView === 'trainings'" class="trainings">
-                <div class="card">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                        <h2>Мои тренировки</h2>
+            <!-- Основное приложение -->
+            <div v-else>
+                <!-- Шапка -->
+                <div class="header">
+                    <div class="user-info">
+                        <div class="user-avatar">{{ user.full_name.charAt(0) }}</div>
                         <div>
-                            <button class="btn btn-primary" @click="showTrainingForm = true">➕ Добавить тренировку</button>
-                            <button class="btn btn-success" @click="connectPolar" style="margin-left: 10px;">🔗 Polar Flow</button>
-                        </div>
-                    </div>
-
-                    <!-- Форма добавления тренировки -->
-                    <div v-if="showTrainingForm" class="card" style="background: #f8f9fa;">
-                        <h3>Новая тренировка</h3>
-                        <div class="form-group">
-                            <label class="form-label">Вид спорта</label>
-                            <select class="form-input" v-model="newTraining.sport_type">
-                                <option value="">Выберите вид спорта</option>
-                                <option value="running">Бег</option>
-                                <option value="cycling">Велосипед</option>
-                                <option value="swimming">Плавание</option>
-                                <option value="strength">Силовая</option>
-                                <option value="yoga">Йога</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">Дата и время</label>
-                            <input class="form-input" type="datetime-local" v-model="newTraining.start_time">
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">Длительность (минуты)</label>
-                            <input class="form-input" type="number" v-model="newTraining.duration_minutes">
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">Дистанция (км)</label>
-                            <input class="form-input" type="number" step="0.1" v-model="newTraining.distance_km">
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">Средний пульс</label>
-                            <input class="form-input" type="number" v-model="newTraining.avg_heart_rate">
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">Заметки</label>
-                            <textarea class="form-input" v-model="newTraining.notes" rows="3"></textarea>
-                        </div>
-                        <div>
-                            <button class="btn btn-primary" @click="saveTraining">Сохранить</button>
-                            <button class="btn" @click="showTrainingForm = false" style="margin-left: 10px;">Отмена</button>
-                        </div>
-                    </div>
-
-                    <!-- Список тренировок -->
-                    <div v-if="trainings.length > 0">
-                        <div v-for="training in trainings" :key="training.id" class="training-item">
-                            <div style="display: flex; justify-content: between; align-items: center;">
-                                <div>
-                                    <strong>{{ formatDate(training.start_time) }}</strong>
-                                    <span class="sport-tag" :style="{background: getSportColor(training.sport_type)}" style="margin-left: 10px;">
-                                        {{ getSportLabel(training.sport_type) }}
-                                    </span>
-                                </div>
-                                <div>
-                                    <span style="margin-right: 15px;">⏱️ {{ Math.round(training.duration_seconds / 60) }} мин</span>
-                                    <span v-if="training.distance_meters">📏 {{ (training.distance_meters / 1000).toFixed(1) }} км</span>
-                                    <span v-if="training.avg_heart_rate" style="margin-left: 15px;">❤️ {{ training.avg_heart_rate }}</span>
-                                </div>
+                            <h2 style="margin: 0;">{{ user.full_name }}</h2>
+                            <div style="display: flex; gap: 10px; align-items: center; margin-top: 5px;">
+                                <span :class="user.polar_access_token ? 'polar-connected' : 'polar-disconnected'">
+                                    {{ user.polar_access_token ? '🔗 Polar подключен' : '❌ Polar не подключен' }}
+                                </span>
+                                <span style="background: #909399; color: white; padding: 2px 8px; border-radius: 3px;">
+                                    {{ user.role === 'coach' ? '👨‍💻 Тренер' : '🏃 Спортсмен' }}
+                                </span>
                             </div>
-                            <div v-if="training.notes" style="margin-top: 5px; color: #666;">{{ training.notes }}</div>
                         </div>
                     </div>
-                    <div v-else class="card" style="text-align: center; color: #666;">
-                        <p>Пока нет тренировок. Добавьте первую!</p>
+
+                    <div class="nav">
+                        <button class="nav-btn" :class="{active: currentView === 'dashboard'}" @click="currentView = 'dashboard'">📊 Дашборд</button>
+                        <button class="nav-btn" :class="{active: currentView === 'trainings'}" @click="currentView = 'trainings'">📝 Тренировки</button>
+                        <button class="nav-btn" :class="{active: currentView === 'plans'}" @click="currentView = 'plans'">📅 Планы</button>
+                        <button class="nav-btn" :class="{active: currentView === 'polar'}" @click="currentView = 'polar'">🔗 Polar Flow</button>
+                        <button class="nav-btn" :class="{active: currentView === 'coach'}" @click="currentView = 'coach'" v-if="user.role === 'coach'">👨‍💻 Тренер</button>
                     </div>
                 </div>
-            </div>
 
-            <!-- Планы тренировок -->
-            <div v-if="currentView === 'plans'" class="plans">
-                <div class="card">
-                    <h2>Планы тренировок</h2>
-                    <div v-if="plans.length > 0">
-                        <div v-for="plan in plans" :key="plan.id" class="training-item">
-                            <h3>{{ plan.title }}</h3>
-                            <p>{{ plan.description }}</p>
-                            <small>Период: {{ formatDate(plan.week_start) }} - {{ formatDate(plan.week_end) }}</small>
+                <!-- Дашборд -->
+                <div v-if="currentView === 'dashboard'" class="dashboard">
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-value">{{ stats.total_trainings || 0 }}</div>
+                            <div class="stat-label">Всего тренировок</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value">{{ stats.total_duration_hours || 0 }}</div>
+                            <div class="stat-label">Часов тренировок</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value">{{ stats.total_distance_km || 0 }}</div>
+                            <div class="stat-label">Километров</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value">{{ currentWeekTrainings || 0 }}</div>
+                            <div class="stat-label">На этой неделе</div>
                         </div>
                     </div>
-                    <div v-else style="text-align: center; color: #666;">
-                        <p>Пока нет планов тренировок</p>
+
+                    <div class="card">
+                        <h3>Тренировки по неделям</h3>
+                        <div class="chart-container">
+                            <canvas ref="weeklyChart"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <h3>Распределение по видам спорта</h3>
+                        <div class="chart-container">
+                            <canvas ref="sportChart"></canvas>
+                        </div>
                     </div>
                 </div>
-            </div>
 
-            <!-- Панель тренера -->
-            <div v-if="currentView === 'coach'" class="coach">
-                <div class="card">
-                    <h2>Панель тренера</h2>
-                    <button class="btn btn-primary" @click="showPlanForm = true">📋 Создать план тренировок</button>
+                <!-- Тренировки -->
+                <div v-if="currentView === 'trainings'" class="trainings">
+                    <div class="card">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                            <h2>Мои тренировки</h2>
+                            <div>
+                                <button class="btn btn-primary" @click="showTrainingForm = true">➕ Добавить тренировку</button>
+                                <button class="btn btn-warning" @click="syncPolar" v-if="user.polar_access_token" style="margin-left: 10px;">🔄 Синхронизировать Polar</button>
+                            </div>
+                        </div>
 
-                    <div v-if="showPlanForm" class="card" style="background: #f8f9fa; margin-top: 20px;">
-                        <h3>Новый план тренировок</h3>
-                        <div class="form-group">
-                            <label class="form-label">Название плана</label>
-                            <input class="form-input" v-model="newPlan.title" placeholder="Например: Тренировочная неделя 1">
+                        <!-- Форма добавления тренировки -->
+                        <div v-if="showTrainingForm" class="card" style="background: #f8f9fa;">
+                            <h3>Новая тренировка</h3>
+                            <div class="form-group">
+                                <label class="form-label">Вид спорта</label>
+                                <select class="form-select" v-model="newTraining.sport_type">
+                                    <option v-for="sport in sports" :key="sport.id" :value="sport.id">{{ sport.name }}</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Дата и время</label>
+                                <input class="form-input" type="datetime-local" v-model="newTraining.start_time">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Длительность (минуты)</label>
+                                <input class="form-input" type="number" v-model="newTraining.duration_minutes" min="1">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Дистанция (км)</label>
+                                <input class="form-input" type="number" step="0.1" v-model="newTraining.distance_km" min="0">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Средний пульс</label>
+                                <input class="form-input" type="number" v-model="newTraining.avg_heart_rate" min="0" max="250">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Заметки</label>
+                                <textarea class="form-textarea" v-model="newTraining.notes" rows="3" placeholder="Опишите как прошла тренировка..."></textarea>
+                            </div>
+                            <div>
+                                <button class="btn btn-primary" @click="saveTraining">💾 Сохранить тренировку</button>
+                                <button class="btn" @click="showTrainingForm = false" style="margin-left: 10px;">❌ Отмена</button>
+                            </div>
                         </div>
-                        <div class="form-group">
-                            <label class="form-label">Описание</label>
-                            <textarea class="form-input" v-model="newPlan.description" rows="3"></textarea>
+
+                        <!-- Список тренировок -->
+                        <div v-if="trainings.length > 0">
+                            <div v-for="training in trainings" :key="training.id" class="training-item">
+                                <div style="display: flex; justify-content: space-between; align-items: center;">
+                                    <div>
+                                        <strong>{{ formatDate(training.start_time) }}</strong>
+                                        <span class="sport-tag" :style="{background: getSportColor(training.sport_type)}" style="margin-left: 10px;">
+                                            {{ getSportLabel(training.sport_type) }}
+                                        </span>
+                                        <span v-if="training.source === 'polar'" style="margin-left: 5px;">🔗</span>
+                                    </div>
+                                    <div>
+                                        <span style="margin-right: 15px;">⏱️ {{ Math.round(training.duration_seconds / 60) }} мин</span>
+                                        <span v-if="training.distance_meters">📏 {{ (training.distance_meters / 1000).toFixed(1) }} км</span>
+                                        <span v-if="training.avg_heart_rate" style="margin-left: 15px;">❤️ {{ training.avg_heart_rate }}</span>
+                                    </div>
+                                </div>
+                                <div v-if="training.notes" style="margin-top: 5px; color: #666;">{{ training.notes }}</div>
+                            </div>
                         </div>
-                        <div class="form-group">
-                            <label class="form-label">Неделя с</label>
-                            <input class="form-input" type="date" v-model="newPlan.week_start">
+                        <div v-else class="card" style="text-align: center; color: #666;">
+                            <p>Пока нет тренировок. Добавьте первую!</p>
                         </div>
-                        <div class="form-group">
-                            <label class="form-label">По</label>
-                            <input class="form-input" type="date" v-model="newPlan.week_end">
+                    </div>
+                </div>
+
+                <!-- Polar Flow -->
+                <div v-if="currentView === 'polar'" class="polar">
+                    <div class="card">
+                        <h2>🔗 Интеграция с Polar Flow</h2>
+
+                        <div v-if="!user.polar_access_token" style="text-align: center; padding: 40px 20px;">
+                            <h3 style="color: #666; margin-bottom: 20px;">Подключите ваши часы Polar</h3>
+                            <p style="margin-bottom: 30px; color: #666;">Синхронизируйте тренировки автоматически с Polar Flow</p>
+                            <button class="btn btn-primary" @click="connectPolar" style="font-size: 1.1em; padding: 15px 30px;">
+                                🔗 Подключить Polar Flow
+                            </button>
+                            <div style="margin-top: 30px; padding: 20px; background: #f8f9fa; border-radius: 10px; text-align: left;">
+                                <h4>Преимущества интеграции:</h4>
+                                <ul style="margin-top: 15px;">
+                                    <li>📥 Автоматическая загрузка тренировок</li>
+                                    <li>❤️ Данные о пульсе и калориях</li>
+                                    <li>📊 Точные метрики тренировок</li>
+                                    <li>🔄 Ежедневная синхронизация</li>
+                                </ul>
+                            </div>
                         </div>
-                        <button class="btn btn-primary" @click="createPlan">Создать план</button>
+
+                        <div v-else>
+                            <div style="background: #67C23A; color: white; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
+                                <h3 style="margin: 0;">✅ Polar Flow подключен</h3>
+                                <p style="margin: 5px 0 0 0;">Ваш аккаунт Polar успешно подключен</p>
+                            </div>
+
+                            <button class="btn btn-warning" @click="syncPolar" style="margin-bottom: 20px;">
+                                🔄 Синхронизировать сейчас
+                            </button>
+
+                            <div class="card" style="background: #f8f9fa;">
+                                <h4>Последняя синхронизация</h4>
+                                <p v-if="lastSync">🕒 {{ lastSync }}</p>
+                                <p v-else>Еще не синхронизировалось</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Планы тренировок -->
+                <div v-if="currentView === 'plans'" class="plans">
+                    <div class="card">
+                        <h2>📅 Планы тренировок</h2>
+                        <div v-if="plans.length > 0">
+                            <div v-for="plan in plans" :key="plan.id" class="training-item">
+                                <h3>{{ plan.title }}</h3>
+                                <p>{{ plan.description }}</p>
+                                <small>Период: {{ formatDate(plan.week_start) }} - {{ formatDate(plan.week_end) }}</small>
+                            </div>
+                        </div>
+                        <div v-else style="text-align: center; color: #666; padding: 40px 20px;">
+                            <p>Пока нет планов тренировок</p>
+                            <p style="margin-top: 10px; font-size: 0.9em;">Обратитесь к тренеру для создания индивидуального плана</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Панель тренера -->
+                <div v-if="currentView === 'coach'" class="coach">
+                    <div class="card">
+                        <h2>👨‍💻 Панель тренера</h2>
+                        <button class="btn btn-primary" @click="showPlanForm = true">📋 Создать план тренировок</button>
+
+                        <div v-if="showPlanForm" class="card" style="background: #f8f9fa; margin-top: 20px;">
+                            <h3>Новый план тренировок</h3>
+                            <div class="form-group">
+                                <label class="form-label">Название плана</label>
+                                <input class="form-input" v-model="newPlan.title" placeholder="Например: Тренировочная неделя 1">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Описание</label>
+                                <textarea class="form-textarea" v-model="newPlan.description" rows="3"></textarea>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Неделя с</label>
+                                <input class="form-input" type="date" v-model="newPlan.week_start">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">По</label>
+                                <input class="form-input" type="date" v-model="newPlan.week_end">
+                            </div>
+                            <button class="btn btn-primary" @click="createPlan">Создать план</button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -221,14 +301,16 @@
                 const stats = ref({});
                 const trainings = ref([]);
                 const plans = ref([]);
+                const sports = ref([]);
                 const showTrainingForm = ref(false);
                 const showPlanForm = ref(false);
                 const weeklyChart = ref(null);
                 const sportChart = ref(null);
+                const lastSync = ref(null);
 
                 // Данные форм
                 const newTraining = ref({
-                    sport_type: '',
+                    sport_type: 'running', // Автоматически выбран бег
                     start_time: new Date().toISOString().slice(0, 16),
                     duration_minutes: 30,
                     distance_km: 0,
@@ -244,29 +326,52 @@
                     assignments: []
                 });
 
-                // Инициализация пользователя
-                const initUser = async () => {
-                    // Эмуляция данных Telegram Web App
-                    const tgUser = {
-                        id: '12345',
-                        username: 'test_user',
-                        first_name: 'Тест',
-                        last_name: 'Пользователь'
-                    };
+                // Авторизация через Telegram
+                const loginWithTelegram = async () => {
+                    if (window.Telegram && window.Telegram.WebApp) {
+                        const tg = window.Telegram.WebApp;
+                        const initData = tg.initData;
 
-                    try {
-                        const response = await axios.post('/api/users/', {
-                            telegram_id: tgUser.id.toString(),
-                            username: tgUser.username,
-                            full_name: `${tgUser.first_name} ${tgUser.last_name || ''}`.trim(),
+                        const formData = new FormData();
+                        formData.append('initData', initData);
+
+                        try {
+                            const response = await axios.post('/api/auth/telegram', formData);
+                            user.value = response.data;
+                            loadInitialData();
+                        } catch (error) {
+                            console.error('Login error:', error);
+                            alert('Ошибка авторизации');
+                        }
+                    } else {
+                        // Режим разработки - создаем тестового пользователя
+                        const testUser = {
+                            id: 1,
+                            telegram_id: '12345',
+                            username: 'test_user',
+                            full_name: 'Тестовый Пользователь',
                             role: 'athlete'
-                        });
-                        user.value = response.data;
-                        loadDashboardData();
-                        loadTrainings();
-                        loadPlans();
+                        };
+                        user.value = testUser;
+                        loadInitialData();
+                    }
+                };
+
+                // Загрузка начальных данных
+                const loadInitialData = async () => {
+                    await loadSports();
+                    await loadDashboardData();
+                    await loadTrainings();
+                    await loadPlans();
+                };
+
+                // Загрузка видов спорта
+                const loadSports = async () => {
+                    try {
+                        const response = await axios.get('/api/sports');
+                        sports.value = response.data;
                     } catch (error) {
-                        console.error('Error initializing user:', error);
+                        console.error('Error loading sports:', error);
                     }
                 };
 
@@ -319,7 +424,7 @@
                         });
                         showTrainingForm.value = false;
                         newTraining.value = {
-                            sport_type: '',
+                            sport_type: 'running', // Сбрасываем к бегу
                             start_time: new Date().toISOString().slice(0, 16),
                             duration_minutes: 30,
                             distance_km: 0,
@@ -328,9 +433,37 @@
                         };
                         loadDashboardData();
                         loadTrainings();
-                        alert('Тренировка добавлена!');
+                        alert('✅ Тренировка добавлена!');
                     } catch (error) {
-                        alert('Ошибка при сохранении тренировки');
+                        alert('❌ Ошибка при сохранении тренировки');
+                    }
+                };
+
+                // Подключение Polar Flow
+                const connectPolar = () => {
+                    // В реальном приложении здесь будет OAuth flow
+                    // Показываем инструкцию
+                    alert(`Для подключения Polar Flow:
+
+1. Перейдите на polar.com
+2. В настройках создайте приложение
+3. Получите Client ID и Client Secret
+4. Свяжитесь с администратором для настройки
+
+Эта функция будет полностью автоматизирована в будущих версиях.`);
+                };
+
+                // Синхронизация с Polar
+                const syncPolar = async () => {
+                    if (!user.value?.id) return;
+                    try {
+                        const response = await axios.get(`/api/polar/sync/${user.value.id}`);
+                        lastSync.value = new Date().toLocaleString();
+                        alert('✅ Синхронизация завершена!');
+                        loadTrainings();
+                        loadDashboardData();
+                    } catch (error) {
+                        alert('❌ Ошибка синхронизации');
                     }
                 };
 
@@ -350,26 +483,26 @@
                         showPlanForm.value = false;
                         newPlan.value = { title: '', description: '', week_start: '', week_end: '', assignments: [] };
                         loadPlans();
-                        alert('План создан!');
+                        alert('✅ План создан!');
                     } catch (error) {
-                        alert('Ошибка при создании плана');
+                        alert('❌ Ошибка при создании плана');
                     }
                 };
 
                 // Вспомогательные функции
                 const formatDate = (dateString) => {
-                    return new Date(dateString).toLocaleDateString('ru-RU');
+                    return new Date(dateString).toLocaleDateString('ru-RU', {
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                    });
                 };
 
                 const getSportLabel = (sport) => {
-                    const labels = {
-                        running: 'Бег',
-                        cycling: 'Велосипед',
-                        swimming: 'Плавание',
-                        strength: 'Силовая',
-                        yoga: 'Йога'
-                    };
-                    return labels[sport] || sport;
+                    const sportObj = sports.value.find(s => s.id === sport);
+                    return sportObj ? sportObj.name : sport;
                 };
 
                 const getSportColor = (sport) => {
@@ -378,13 +511,12 @@
                         cycling: '#67C23A',
                         swimming: '#E6A23C',
                         strength: '#F56C6C',
-                        yoga: '#909399'
+                        yoga: '#909399',
+                        walking: '#8E44AD',
+                        skiing: '#16A085',
+                        rowing: '#2980B9'
                     };
                     return colors[sport] || '#666';
-                };
-
-                const connectPolar = () => {
-                    alert('Интеграция с Polar Flow будет реализована позже');
                 };
 
                 const currentWeekTrainings = computed(() => {
@@ -393,40 +525,68 @@
 
                 // Создание графиков
                 const createCharts = () => {
-                    if (!stats.value.weekly_stats) return;
+                    if (!stats.value.weekly_stats || weeklyChart.value === null) return;
+
+                    // Уничтожаем старые графики если есть
+                    if (window.weeklyChartInstance) {
+                        window.weeklyChartInstance.destroy();
+                    }
+                    if (window.sportChartInstance) {
+                        window.sportChartInstance.destroy();
+                    }
 
                     // График по неделям
                     const weeklyCtx = weeklyChart.value.getContext('2d');
-                    new Chart(weeklyCtx, {
+                    window.weeklyChartInstance = new Chart(weeklyCtx, {
                         type: 'line',
                         data: {
-                            labels: stats.value.weekly_stats.map(s => s.week).reverse(),
+                            labels: stats.value.weekly_stats.map(s => {
+                                const date = new Date(s.week);
+                                return date.toLocaleDateString('ru-RU', {month: 'short', day: 'numeric'});
+                            }).reverse(),
                             datasets: [{
                                 label: 'Тренировки в неделю',
                                 data: stats.value.weekly_stats.map(s => s.trainings).reverse(),
                                 borderColor: '#409EFF',
                                 backgroundColor: 'rgba(64, 158, 255, 0.1)',
-                                tension: 0.4
+                                tension: 0.4,
+                                fill: true
                             }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false
                         }
                     });
 
                     // Круговая диаграмма видов спорта
-                    const sportCtx = sportChart.value.getContext('2d');
-                    new Chart(sportCtx, {
-                        type: 'doughnut',
-                        data: {
-                            labels: stats.value.sport_distribution.map(s => getSportLabel(s.sport)),
-                            datasets: [{
-                                data: stats.value.sport_distribution.map(s => s.count),
-                                backgroundColor: stats.value.sport_distribution.map(s => getSportColor(s.sport))
-                            }]
-                        }
-                    });
+                    if (stats.value.sport_distribution && stats.value.sport_distribution.length > 0) {
+                        const sportCtx = sportChart.value.getContext('2d');
+                        window.sportChartInstance = new Chart(sportCtx, {
+                            type: 'doughnut',
+                            data: {
+                                labels: stats.value.sport_distribution.map(s => {
+                                    const sportObj = sports.value.find(sp => sp.id === s.sport);
+                                    return sportObj ? sportObj.name.replace(/[^a-zA-Zа-яА-Я]/g, '') : s.sport;
+                                }),
+                                datasets: [{
+                                    data: stats.value.sport_distribution.map(s => s.count),
+                                    backgroundColor: stats.value.sport_distribution.map(s => getSportColor(s.sport))
+                                }]
+                            },
+                            options: {
+                                responsive: true,
+                                maintainAspectRatio: false
+                            }
+                        });
+                    }
                 };
 
                 onMounted(() => {
-                    initUser();
+                    // Автоматический вход если в Telegram Web App
+                    if (window.Telegram && window.Telegram.WebApp) {
+                        loginWithTelegram();
+                    }
                 });
 
                 return {
@@ -435,18 +595,22 @@
                     stats,
                     trainings,
                     plans,
+                    sports,
                     showTrainingForm,
                     showPlanForm,
                     newTraining,
                     newPlan,
                     weeklyChart,
                     sportChart,
+                    lastSync,
+                    loginWithTelegram,
                     saveTraining,
                     createPlan,
+                    connectPolar,
+                    syncPolar,
                     formatDate,
                     getSportLabel,
                     getSportColor,
-                    connectPolar,
                     currentWeekTrainings,
                     loadDashboardData,
                     loadTrainings,

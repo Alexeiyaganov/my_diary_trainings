@@ -39,6 +39,9 @@
         .login-btn { background: #409EFF; color: white; padding: 15px 30px; border: none; border-radius: 10px; font-size: 1.2em; cursor: pointer; }
         .user-info { display: flex; align-items: center; gap: 10px; margin-bottom: 15px; }
         .user-avatar { width: 50px; height: 50px; border-radius: 50%; background: #409EFF; color: white; display: flex; align-items: center; justify-content: center; font-weight: bold; }
+        .polar-form { background: #f8f9fa; padding: 20px; border-radius: 10px; margin-bottom: 20px; }
+        .instructions { background: #e8f4fd; padding: 15px; border-radius: 5px; margin-bottom: 15px; }
+        .instruction-step { margin-bottom: 10px; }
     </style>
 </head>
 <body>
@@ -72,8 +75,8 @@
                         <div>
                             <h2 style="margin: 0;">{{ user.full_name }}</h2>
                             <div style="display: flex; gap: 10px; align-items: center; margin-top: 5px;">
-                                <span :class="user.polar_access_token ? 'polar-connected' : 'polar-disconnected'">
-                                    {{ user.polar_access_token ? '🔗 Polar подключен' : '❌ Polar не подключен' }}
+                                <span :class="polarStatus.connected ? 'polar-connected' : 'polar-disconnected'">
+                                    {{ polarStatus.connected ? '🔗 Polar подключен' : '❌ Polar не подключен' }}
                                 </span>
                                 <span style="background: #909399; color: white; padding: 2px 8px; border-radius: 3px;">
                                     {{ user.role === 'coach' ? '👨‍💻 Тренер' : '🏃 Спортсмен' }}
@@ -134,7 +137,7 @@
                             <h2>Мои тренировки</h2>
                             <div>
                                 <button class="btn btn-primary" @click="showTrainingForm = true">➕ Добавить тренировку</button>
-                                <button class="btn btn-warning" @click="syncPolar" v-if="user.polar_access_token" style="margin-left: 10px;">🔄 Синхронизировать Polar</button>
+                                <button class="btn btn-warning" @click="syncPolar" v-if="polarStatus.connected" style="margin-left: 10px;">🔄 Синхронизировать Polar</button>
                             </div>
                         </div>
 
@@ -204,27 +207,35 @@
                     <div class="card">
                         <h2>🔗 Интеграция с Polar Flow</h2>
 
-                        <div v-if="!user.polar_access_token" style="text-align: center; padding: 40px 20px;">
-                            <h3 style="color: #666; margin-bottom: 20px;">Подключите ваши часы Polar</h3>
-                            <p style="margin-bottom: 30px; color: #666;">Синхронизируйте тренировки автоматически с Polar Flow</p>
-                            <button class="btn btn-primary" @click="connectPolar" style="font-size: 1.1em; padding: 15px 30px;">
-                                🔗 Подключить Polar Flow
-                            </button>
-                            <div style="margin-top: 30px; padding: 20px; background: #f8f9fa; border-radius: 10px; text-align: left;">
-                                <h4>Преимущества интеграции:</h4>
-                                <ul style="margin-top: 15px;">
-                                    <li>📥 Автоматическая загрузка тренировок</li>
-                                    <li>❤️ Данные о пульсе и калориях</li>
-                                    <li>📊 Точные метрики тренировок</li>
-                                    <li>🔄 Ежедневная синхронизация</li>
-                                </ul>
+                        <div v-if="!polarStatus.connected" style="text-align: center; padding: 20px;">
+                            <div class="instructions">
+                                <h3>📋 Инструкция по подключению:</h3>
+                                <div class="instruction-step">1. Перейдите на <a href="https://admin.polar.com/" target="_blank">Polar Admin</a></div>
+                                <div class="instruction-step">2. Создайте новое приложение</div>
+                                <div class="instruction-step">3. Получите Client ID и Client Secret</div>
+                                <div class="instruction-step">4. Введите данные ниже</div>
+                            </div>
+
+                            <div class="polar-form">
+                                <h3>🔐 Введите данные приложения Polar</h3>
+                                <div class="form-group">
+                                    <label class="form-label">Client ID</label>
+                                    <input class="form-input" v-model="polarCredentials.client_id" placeholder="Введите Client ID">
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Client Secret</label>
+                                    <input class="form-input" type="password" v-model="polarCredentials.client_secret" placeholder="Введите Client Secret">
+                                </div>
+                                <button class="btn btn-primary" @click="initPolarAuth" :disabled="!polarCredentials.client_id || !polarCredentials.client_secret">
+                                    🔗 Начать авторизацию
+                                </button>
                             </div>
                         </div>
 
                         <div v-else>
                             <div style="background: #67C23A; color: white; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
                                 <h3 style="margin: 0;">✅ Polar Flow подключен</h3>
-                                <p style="margin: 5px 0 0 0;">Ваш аккаунт Polar успешно подключен</p>
+                                <p style="margin: 5px 0 0 0;">Polar User ID: {{ polarStatus.user_id }}</p>
                             </div>
 
                             <button class="btn btn-warning" @click="syncPolar" style="margin-bottom: 20px;">
@@ -232,9 +243,9 @@
                             </button>
 
                             <div class="card" style="background: #f8f9fa;">
-                                <h4>Последняя синхронизация</h4>
-                                <p v-if="lastSync">🕒 {{ lastSync }}</p>
-                                <p v-else>Еще не синхронизировалось</p>
+                                <h4>Информация о подключении</h4>
+                                <p><strong>Polar User ID:</strong> {{ polarStatus.user_id }}</p>
+                                <p><strong>Последняя синхронизация:</strong> {{ polarStatus.last_sync ? formatDate(polarStatus.last_sync) : 'Еще не синхронизировалось' }}</p>
                             </div>
                         </div>
                     </div>
@@ -291,7 +302,7 @@
     </div>
 
     <script>
-        const { createApp, ref, onMounted, computed } = Vue;
+        const { createApp, ref, onMounted, computed, watch } = Vue;
 
         createApp({
             setup() {
@@ -306,11 +317,12 @@
                 const showPlanForm = ref(false);
                 const weeklyChart = ref(null);
                 const sportChart = ref(null);
-                const lastSync = ref(null);
+                const polarStatus = ref({ connected: false });
+                const polarCredentials = ref({ client_id: '', client_secret: '' });
 
                 // Данные форм
                 const newTraining = ref({
-                    sport_type: 'running', // Автоматически выбран бег
+                    sport_type: 'running',
                     start_time: new Date().toISOString().slice(0, 16),
                     duration_minutes: 30,
                     distance_km: 0,
@@ -332,13 +344,13 @@
                         let initData = '';
 
                         if (window.Telegram && window.Telegram.WebApp) {
-                            // В Telegram Web App
                             const tg = window.Telegram.WebApp;
                             initData = tg.initData;
-                            tg.expand(); // Раскрываем приложение на весь экран
+                            tg.expand();
+                            tg.enableClosingConfirmation();
                         } else {
-                            // Вне Telegram - используем тестовые данные
-                            initData = 'test_mode=true';
+                            alert('Откройте приложение через Telegram для авторизации');
+                            return;
                         }
 
                         const formData = new FormData();
@@ -349,15 +361,7 @@
                         loadInitialData();
                     } catch (error) {
                         console.error('Login error:', error);
-                        // В случае ошибки создаем тестового пользователя
-                        user.value = {
-                            id: 1,
-                            telegram_id: '12345',
-                            username: 'test_user',
-                            full_name: 'Тестовый Пользователь',
-                            role: 'athlete'
-                        };
-                        loadInitialData();
+                        alert('Ошибка авторизации. Убедитесь, что открыли приложение через Telegram.');
                     }
                 };
 
@@ -367,9 +371,56 @@
                     await loadDashboardData();
                     await loadTrainings();
                     await loadPlans();
+                    await loadPolarStatus();
                 };
 
-                // Загрузка видов спорта
+                // Загрузка статуса Polar
+                const loadPolarStatus = async () => {
+                    if (!user.value?.id) return;
+                    try {
+                        const response = await axios.get(`/api/polar/status/${user.value.id}`);
+                        polarStatus.value = response.data;
+                    } catch (error) {
+                        console.error('Error loading Polar status:', error);
+                    }
+                };
+
+                // Инициализация авторизации Polar
+                const initPolarAuth = async () => {
+                    if (!user.value?.id) return;
+                    try {
+                        const response = await axios.post('/api/polar/init-auth', {
+                            user_id: user.value.id,
+                            client_id: polarCredentials.value.client_id,
+                            client_secret: polarCredentials.value.client_secret
+                        });
+
+                        // Открываем окно авторизации
+                        window.open(response.data.auth_url, '_blank');
+
+                        alert('Откроется окно авторизации Polar. После завершения вернитесь в приложение.');
+                    } catch (error) {
+                        console.error('Polar auth error:', error);
+                        alert('Ошибка инициализации авторизации Polar');
+                    }
+                };
+
+                // Синхронизация с Polar
+                const syncPolar = async () => {
+                    if (!user.value?.id) return;
+                    try {
+                        const response = await axios.get(`/api/polar/sync/${user.value.id}`);
+                        alert(`✅ ${response.data.message}`);
+                        loadTrainings();
+                        loadDashboardData();
+                        loadPolarStatus();
+                    } catch (error) {
+                        console.error('Polar sync error:', error);
+                        alert('❌ Ошибка синхронизации с Polar');
+                    }
+                };
+
+                // Остальные функции остаются такими же как в предыдущей версии
                 const loadSports = async () => {
                     try {
                         const response = await axios.get('/api/sports');
@@ -379,7 +430,6 @@
                     }
                 };
 
-                // Загрузка данных дашборда
                 const loadDashboardData = async () => {
                     if (!user.value?.id) return;
                     try {
@@ -391,7 +441,6 @@
                     }
                 };
 
-                // Загрузка тренировок
                 const loadTrainings = async () => {
                     if (!user.value?.id) return;
                     try {
@@ -402,7 +451,6 @@
                     }
                 };
 
-                // Загрузка планов
                 const loadPlans = async () => {
                     if (!user.value?.id) return;
                     try {
@@ -413,7 +461,6 @@
                     }
                 };
 
-                // Сохранение тренировки
                 const saveTraining = async () => {
                     if (!user.value?.id) return;
                     try {
@@ -428,7 +475,7 @@
                         });
                         showTrainingForm.value = false;
                         newTraining.value = {
-                            sport_type: 'running', // Сбрасываем к бегу
+                            sport_type: 'running',
                             start_time: new Date().toISOString().slice(0, 16),
                             duration_minutes: 30,
                             distance_km: 0,
@@ -443,33 +490,6 @@
                     }
                 };
 
-                // Подключение Polar Flow
-                const connectPolar = () => {
-                    alert(`Для подключения Polar Flow:
-
-1. Перейдите на polar.com
-2. В настройках создайте приложение
-3. Получите Client ID и Client Secret
-4. Свяжитесь с администратором для настройки
-
-Эта функция будет полностью автоматизирована в будущих версиях.`);
-                };
-
-                // Синхронизация с Polar
-                const syncPolar = async () => {
-                    if (!user.value?.id) return;
-                    try {
-                        const response = await axios.get(`/api/polar/sync/${user.value.id}`);
-                        lastSync.value = new Date().toLocaleString();
-                        alert('✅ Синхронизация завершена!');
-                        loadTrainings();
-                        loadDashboardData();
-                    } catch (error) {
-                        alert('❌ Ошибка синхронизации');
-                    }
-                };
-
-                // Создание плана
                 const createPlan = async () => {
                     if (!user.value?.id) return;
                     try {
@@ -491,7 +511,6 @@
                     }
                 };
 
-                // Вспомогательные функции
                 const formatDate = (dateString) => {
                     return new Date(dateString).toLocaleDateString('ru-RU', {
                         year: 'numeric',
@@ -525,11 +544,9 @@
                     return stats.value.weekly_stats?.[0]?.trainings || 0;
                 });
 
-                // Создание графиков
                 const createCharts = () => {
                     if (!stats.value.weekly_stats || weeklyChart.value === null) return;
 
-                    // Уничтожаем старые графики если есть
                     if (window.weeklyChartInstance) {
                         window.weeklyChartInstance.destroy();
                     }
@@ -537,7 +554,6 @@
                         window.sportChartInstance.destroy();
                     }
 
-                    // График по неделям
                     const weeklyCtx = weeklyChart.value.getContext('2d');
                     window.weeklyChartInstance = new Chart(weeklyCtx, {
                         type: 'line',
@@ -561,7 +577,6 @@
                         }
                     });
 
-                    // Круговая диаграмма видов спорта
                     if (stats.value.sport_distribution && stats.value.sport_distribution.length > 0) {
                         const sportCtx = sportChart.value.getContext('2d');
                         window.sportChartInstance = new Chart(sportCtx, {
@@ -585,7 +600,6 @@
                 };
 
                 onMounted(() => {
-                    // Автоматический вход если в Telegram Web App
                     if (window.Telegram && window.Telegram.WebApp) {
                         loginWithTelegram();
                     }
@@ -604,12 +618,13 @@
                     newPlan,
                     weeklyChart,
                     sportChart,
-                    lastSync,
+                    polarStatus,
+                    polarCredentials,
                     loginWithTelegram,
+                    initPolarAuth,
+                    syncPolar,
                     saveTraining,
                     createPlan,
-                    connectPolar,
-                    syncPolar,
                     formatDate,
                     getSportLabel,
                     getSportColor,

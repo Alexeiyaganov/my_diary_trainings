@@ -7,15 +7,20 @@ from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.orm import declarative_base
 from datetime import datetime, timedelta
 import os
-from pydantic import BaseModel
-from typing import Optional, List
 import json
 import hashlib
 import hmac
+import urllib.parse
+import base64
+import httpx
 
 # Конфигурация
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./test.db")
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "your_bot_token_here")
+POLAR_CLIENT_ID = os.getenv("POLAR_CLIENT_ID", "")
+POLAR_CLIENT_SECRET = os.getenv("POLAR_CLIENT_SECRET", "")
+POLAR_REDIRECT_URI = os.getenv("POLAR_REDIRECT_URI", "http://localhost:8000/api/polar/callback")
+
 Base = declarative_base()
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -30,7 +35,9 @@ class User(Base):
     full_name = Column(String(200))
     role = Column(String(20), default='athlete')
     polar_access_token = Column(Text)
+    polar_refresh_token = Column(Text)
     polar_user_id = Column(String(100))
+    polar_expires_at = Column(DateTime)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -43,6 +50,7 @@ class TrainingSession(Base):
     sport_type = Column(String(100))
     distance_meters = Column(Float)
     avg_heart_rate = Column(Integer)
+    max_heart_rate = Column(Integer)
     calories = Column(Integer)
     notes = Column(Text)
     source = Column(String(20), default='manual')
@@ -74,6 +82,10 @@ class TrainingAssignment(Base):
 
 
 # Pydantic модели
+from pydantic import BaseModel
+from typing import Optional, List
+
+
 class UserCreate(BaseModel):
     telegram_id: str
     username: Optional[str] = None
@@ -103,8 +115,8 @@ class TrainingPlanCreate(BaseModel):
 
 class PolarAuthRequest(BaseModel):
     user_id: int
-    access_token: str
-    user_id_polar: str
+    client_id: str
+    client_secret: str
 
 
 # FastAPI приложение
@@ -136,16 +148,117 @@ def startup():
     Base.metadata.create_all(bind=engine)
 
 
-# Упрощенная валидация Telegram Web App данных (для разработки)
+# Валидация Telegram Web App данных
 def validate_telegram_data(init_data: str) -> bool:
     if not TELEGRAM_BOT_TOKEN:
-        return True  # В разработке пропускаем проверку
+        return False
 
     try:
-        # Простая проверка наличия данных
-        return len(init_data) > 10
-    except:
+        parsed_data = {}
+        for item in init_data.split('&'):
+            key, value = item.split('=')
+            parsed_data[key] = value
+
+        hash_str = parsed_data.pop('hash', '')
+        data_check_string = '\n'.join([f"{k}={v}" for k, v in sorted(parsed_data.items())])
+
+        secret_key = hmac.new(b"WebAppData", TELEGRAM_BOT_TOKEN.encode(), hashlib.sha256).digest()
+        calculated_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+
+        return calculated_hash == hash_str
+    except Exception as e:
+        print(f"Telegram validation error: {e}")
         return False
+
+
+# Парсинг данных пользователя из initData
+def parse_telegram_user(init_data: str):
+    try:
+        user_data = {}
+        for item in init_data.split('&'):
+            if 'user=' in item:
+                user_json = urllib.parse.unquote(item.split('user=')[1])
+                user_data = json.loads(user_json)
+                break
+        return user_data
+    except Exception as e:
+        print(f"Error parsing Telegram user: {e}")
+        return {}
+
+
+# Polar Flow API integration
+class PolarAPI:
+    @staticmethod
+    async def get_auth_url(client_id: str, redirect_uri: str) -> str:
+        base_url = "https://flow.polar.com/oauth2/authorization"
+        params = {
+            'response_type': 'code',
+            'client_id': client_id,
+            'redirect_uri': redirect_uri,
+            'scope': 'accesslink.read_all'
+        }
+        return f"{base_url}?{urllib.parse.urlencode(params)}"
+
+    @staticmethod
+    async def exchange_code_for_token(client_id: str, client_secret: str, code: str, redirect_uri: str):
+        async with httpx.AsyncClient() as client:
+            auth_header = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+            response = await client.post(
+                "https://polarremote.com/v2/oauth2/token",
+                data={
+                    'grant_type': 'authorization_code',
+                    'code': code,
+                    'redirect_uri': redirect_uri
+                },
+                headers={
+                    'Authorization': f'Basic {auth_header}',
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                }
+            )
+            return response.json() if response.status_code == 200 else None
+
+    @staticmethod
+    async def get_user_id(access_token: str):
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                "https://www.polaraccesslink.com/v3/users",
+                headers={'Authorization': f'Bearer {access_token}'}
+            )
+            if response.status_code == 200:
+                data = response.json()
+                return data[0]['member-id'] if data else None
+            return None
+
+    @staticmethod
+    async def get_exercises(access_token: str, user_id: str, after: str = None):
+        async with httpx.AsyncClient() as client:
+            url = f"https://www.polaraccesslink.com/v3/users/{user_id}/exercises"
+            if after:
+                url += f"?after={after}"
+
+            response = await client.get(
+                url,
+                headers={'Authorization': f'Bearer {access_token}'}
+            )
+            return response.json() if response.status_code == 200 else []
+
+    @staticmethod
+    async def get_exercise_transaction(access_token: str, user_id: str, transaction_id: str):
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"https://www.polaraccesslink.com/v3/users/{user_id}/exercise-transactions/{transaction_id}",
+                headers={'Authorization': f'Bearer {access_token}'}
+            )
+            return response.json() if response.status_code == 200 else None
+
+    @staticmethod
+    async def commit_exercise_transaction(access_token: str, user_id: str, transaction_id: str):
+        async with httpx.AsyncClient() as client:
+            response = await client.put(
+                f"https://www.polaraccesslink.com/v3/users/{user_id}/exercise-transactions/{transaction_id}",
+                headers={'Authorization': f'Bearer {access_token}'}
+            )
+            return response.status_code == 204
 
 
 # API endpoints
@@ -157,61 +270,26 @@ async def read_index():
 @app.post("/api/auth/telegram")
 async def auth_telegram(initData: str = Form(...), db: Session = Depends(get_db)):
     if not validate_telegram_data(initData):
-        # В режиме разработки создаем тестового пользователя
-        test_user = db.query(User).filter(User.telegram_id == "12345").first()
-        if not test_user:
-            test_user = User(
-                telegram_id="12345",
-                username="test_user",
-                full_name="Тестовый Пользователь",
-                role="athlete"
-            )
-            db.add(test_user)
-            db.commit()
-            db.refresh(test_user)
-        return test_user
+        raise HTTPException(status_code=401, detail="Invalid Telegram data")
 
-    try:
-        # Парсим данные пользователя из initData
-        user_data = {}
-        for item in initData.split('&'):
-            if 'user=' in item:
-                user_json = item.split('user=')[1]
-                user_data = json.loads(user_json)
-                break
+    user_data = parse_telegram_user(initData)
+    if not user_data:
+        raise HTTPException(status_code=400, detail="User data not found")
 
-        if not user_data:
-            raise HTTPException(status_code=400, detail="User data not found")
+    # Создаем/обновляем пользователя
+    db_user = db.query(User).filter(User.telegram_id == str(user_data['id'])).first()
+    if not db_user:
+        db_user = User(
+            telegram_id=str(user_data['id']),
+            username=user_data.get('username'),
+            full_name=f"{user_data.get('first_name', '')} {user_data.get('last_name', '')}".strip(),
+            role='athlete'
+        )
+        db.add(db_user)
+        db.commit()
+        db.refresh(db_user)
 
-        # Создаем/обновляем пользователя
-        db_user = db.query(User).filter(User.telegram_id == str(user_data['id'])).first()
-        if not db_user:
-            db_user = User(
-                telegram_id=str(user_data['id']),
-                username=user_data.get('username'),
-                full_name=f"{user_data.get('first_name', '')} {user_data.get('last_name', '')}".strip(),
-                role='athlete'
-            )
-            db.add(db_user)
-            db.commit()
-            db.refresh(db_user)
-
-        return db_user
-
-    except Exception as e:
-        # В случае ошибки тоже возвращаем тестового пользователя
-        test_user = db.query(User).filter(User.telegram_id == "12345").first()
-        if not test_user:
-            test_user = User(
-                telegram_id="12345",
-                username="test_user",
-                full_name="Тестовый Пользователь",
-                role="athlete"
-            )
-            db.add(test_user)
-            db.commit()
-            db.refresh(test_user)
-        return test_user
+    return db_user
 
 
 @app.get("/api/users/telegram/{telegram_id}")
@@ -287,32 +365,133 @@ async def get_dashboard_stats(user_id: int, db: Session = Depends(get_db)):
     }
 
 
-@app.post("/api/polar/auth")
-async def polar_auth(auth: PolarAuthRequest, db: Session = Depends(get_db)):
+# Polar Flow endpoints
+@app.post("/api/polar/init-auth")
+async def polar_init_auth(auth: PolarAuthRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.id == auth.user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    user.polar_access_token = auth.access_token
-    user.polar_user_id = auth.user_id_polar
+    # Сохраняем client_id и client_secret для пользователя
+    user.polar_access_token = auth.client_id  # Временно храним client_id здесь
+    user.polar_refresh_token = auth.client_secret  # Временно храним client_secret здесь
     db.commit()
 
-    return {"status": "success", "message": "Polar account connected"}
+    redirect_uri = f"{POLAR_REDIRECT_URI}?user_id={user.id}"
+    auth_url = await PolarAPI.get_auth_url(auth.client_id, redirect_uri)
+
+    return {"auth_url": auth_url}
+
+
+@app.get("/api/polar/callback")
+async def polar_callback(code: str, user_id: int, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Получаем токены
+    token_data = await PolarAPI.exchange_code_for_token(
+        user.polar_access_token,  # client_id
+        user.polar_refresh_token,  # client_secret
+        code,
+        f"{POLAR_REDIRECT_URI}?user_id={user.id}"
+    )
+
+    if not token_data:
+        raise HTTPException(status_code=400, detail="Failed to get access token")
+
+    # Сохраняем токены
+    user.polar_access_token = token_data['access_token']
+    user.polar_refresh_token = token_data.get('refresh_token')
+    user.polar_expires_at = datetime.utcnow() + timedelta(seconds=token_data['expires_in'])
+
+    # Получаем Polar user ID
+    polar_user_id = await PolarAPI.get_user_id(user.polar_access_token)
+    if polar_user_id:
+        user.polar_user_id = polar_user_id
+
+    db.commit()
+
+    return {"status": "success", "message": "Polar account connected successfully"}
 
 
 @app.get("/api/polar/sync/{user_id}")
 async def sync_polar_data(user_id: int, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.id == user_id).first()
-    if not user or not user.polar_access_token:
+    if not user or not user.polar_access_token or not user.polar_user_id:
         raise HTTPException(status_code=400, detail="Polar not connected")
 
-    # Здесь будет реальная синхронизация с Polar API
-    # Пока возвращаем заглушку
+    # Получаем последнюю синхронизацию
+    last_sync = db.query(TrainingSession).filter(
+        TrainingSession.user_id == user_id,
+        TrainingSession.source == 'polar'
+    ).order_by(TrainingSession.start_time.desc()).first()
+
+    after_date = last_sync.start_time.isoformat() if last_sync else None
+
+    # Получаем упражнения
+    exercises = await PolarAPI.get_exercises(user.polar_access_token, user.polar_user_id, after_date)
+
+    synced_trainings = []
+
+    for exercise in exercises.get('exercises', []):
+        # Получаем детали упражнения
+        transaction = await PolarAPI.get_exercise_transaction(
+            user.polar_access_token,
+            user.polar_user_id,
+            exercise['id']
+        )
+
+        if transaction and 'exercise' in transaction:
+            exercise_data = transaction['exercise']
+
+            # Создаем тренировку
+            db_training = TrainingSession(
+                user_id=user_id,
+                start_time=datetime.fromisoformat(exercise_data['start_time']),
+                duration_seconds=exercise_data.get('duration', 0),
+                sport_type=exercise_data.get('sport', 'other'),
+                distance_meters=exercise_data.get('distance', 0),
+                avg_heart_rate=exercise_data.get('heart_rate', {}).get('average'),
+                max_heart_rate=exercise_data.get('heart_rate', {}).get('maximum'),
+                calories=exercise_data.get('calories', 0),
+                source='polar',
+                polar_training_id=exercise['id']
+            )
+            db.add(db_training)
+            synced_trainings.append({
+                'id': exercise['id'],
+                'sport': exercise_data.get('sport', 'other'),
+                'start_time': exercise_data['start_time'],
+                'duration': exercise_data.get('duration', 0)
+            })
+
+            # Подтверждаем транзакцию
+            await PolarAPI.commit_exercise_transaction(
+                user.polar_access_token,
+                user.polar_user_id,
+                exercise['id']
+            )
+
+    db.commit()
+
     return {
         "status": "success",
-        "message": "Polar sync completed",
-        "synced_trainings": 0,
-        "new_trainings": []
+        "message": f"Synced {len(synced_trainings)} new trainings",
+        "synced_trainings": synced_trainings
+    }
+
+
+@app.get("/api/polar/status/{user_id}")
+async def polar_status(user_id: int, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    return {
+        "connected": bool(user.polar_access_token and user.polar_user_id),
+        "user_id": user.polar_user_id,
+        "last_sync": user.polar_expires_at.isoformat() if user.polar_expires_at else None
     }
 
 
